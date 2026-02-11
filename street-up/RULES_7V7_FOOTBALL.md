@@ -1,93 +1,108 @@
-# Street Up: Simple 7-on-7 Football Rules
+# Street Up - Complete v0 Rules + Setup Plan
 
-## Game Identity
-Street Up is a simple, fast American football (gridiron) game focused on street-style 7-on-7 play.
+## Game Vision
+Street Up starts as a simple 7-on-7 **American football** street game (not soccer).
+The first playable goal is not polished multiplayer yet.
+The first goal is:
+- Two AI teams.
+- Moving the ball up the field.
+- Scoring in opposite end zones.
+- Repeating drives so we can tune football AI behavior.
 
-## Core Format
-- Teams: 7 players on offense vs 7 players on defense.
-- Field: Smaller than full 11-man football (choose one map size and keep it consistent).
-- Contact level: Light contact / no full tackling by default.
-- Match flow: Short games with quick drives.
+## Visual Identity (Current Prototype)
+- Field color: Green.
+- End zones:
+	- One Red.
+	- One Blue.
+- Team look:
+	- Red team uses red capsule/bean players.
+	- Blue team uses blue capsule/bean players.
+- Direction:
+	- Blue offense attacks the red end zone.
+	- Red offense attacks the blue end zone.
 
-## Recommended Team Roles (Simple Version)
-- Offense:
-	- 1 QB
-	- 1 Center (snap only)
-	- 1-2 Running Backs / Utility
-	- 3-4 Receivers
-- Defense:
-	- 1 Rusher
-	- 2-3 Cover Defenders
-	- 2-3 Safeties / Hybrid Defenders
+## Prototype Player Model Rules
+- Everyone is a simple bean/capsule for now.
+- The football is a simple bean/ball placeholder.
+- No realistic player models required in v0.
 
-## Simple Possession Rules
-- Start each drive at your own 25-yard line (or equivalent marked line).
-- Offense has 4 downs to reach a first-down marker.
-- First-down distance: 15 yards (or 10 yards on smaller maps).
-- If offense fails on 4th down, possession changes at the dead-ball spot.
+## Core 7-on-7 Format
+- 7 players on offense.
+- 7 players on defense.
+- Smaller street field than full 11-man football.
+- Fast possessions and short match flow.
 
-## Scoring
-- Touchdown: 6 points.
-- Extra point:
-	- 1 point from short try line.
-	- 2 points from longer try line.
-- Safety: 2 points.
-- Optional field goals can be disabled in default mode to keep gameplay simple.
+## Roles (Temporary + Flexible)
+For v0, role assignment is light and can change during play.
+- Offense can include:
+	- QB
+	- Center/snapping role
+	- Utility backs
+	- Receivers
+- Defense can include:
+	- Rusher(s)
+	- Coverage defenders
+	- Deep defenders
 
-## Play Start and Dead Ball
-- Each play starts with a snap from center to QB.
-- Ball is dead when:
-	- Ball carrier is downed/flagged/tagged (based on game mode).
-	- Pass is incomplete.
-	- Ball carrier goes out of bounds.
-	- Defense records a sack behind line of scrimmage.
+## In-Game Role Switching (Planned)
+- Players can vote/switch into different roles during the game.
+- Formal role-lock rules are postponed.
+- Priority is gameplay flow over strict roster restrictions.
 
-## Passing and Rushing Rules
-- QB has a short "no-rush" window (example: 2 seconds) before defense can fully rush.
-- At least 1 defender may rush every play.
-- Forward pass allowed once per play from behind line of scrimmage.
-- Lateral/backward passes allowed anytime.
-- Optional simple rule: Offense must cross line of scrimmage before running on selected modes.
+## Ball + Drive Rules (Simple)
+- Start each drive at a consistent yard line (ex: own 25).
+- 4 downs to gain a first down.
+- First down distance can be 10-15 yards depending on map scale.
+- Turnover on downs if not converted.
 
-## Turnovers
-- Interceptions: live ball, return allowed.
-- Fumbles:
-	- Default arcade mode: no fumbles.
-	- Simulation-lite mode: fumbles on heavy hit chance.
+## Scoring Rules
+- Touchdown = 6 points.
+- Conversion try after touchdown:
+	- Short try = 1 point.
+	- Longer try = 2 points.
+- Safety = 2 points.
+- Punts/field goals optional and can remain disabled in v0.
 
-## Clock and Match Length (Recommended)
-- 2 halves.
-- 6-8 minutes per half (running clock).
-- Final 2 minutes of each half can use stop-clock rules for passes out of bounds, incompletions, and scores.
+## Live Play Rules
+- Snap starts each play.
+- One forward pass allowed from behind line of scrimmage.
+- Lateral/backward passes allowed.
+- Play ends when ball carrier is down/tagged, out of bounds, or pass incomplete.
+- Interceptions are live-ball turnovers.
 
-## Overtime (Simple)
-- Each team gets 1 possession from opponent territory.
-- If still tied after both possessions, repeat until winner.
-- Option: require 2-point tries after second OT round.
+## Clock + Match Rules
+- Keep it simple for now:
+	- 2 halves.
+	- Short running clock.
+- Fine-grain late-game clock logic can be added after core AI feels good.
 
-## Penalties (Keep Minimal)
-Use only a small set of easy-to-understand penalties:
-- Offside / Neutral zone infraction.
-- False start.
-- Pass interference.
-- Illegal forward pass (past line of scrimmage).
-- Delay of game.
+## AI-vs-AI Priority (Main Development Goal)
+Before expanding features, we need stable AI football flow:
+- AI offense chooses a carrier/target and advances.
+- AI defense pursues and stops plays.
+- Teams alternate possession correctly.
+- Teams can repeatedly score drives in opposite directions.
+- Movement and spacing look readable and football-like.
 
-## Street Up Default Ruleset (Suggested v1)
-- 7-on-7, American football only.
-- No full special teams.
-- No punts by default.
-- 4 downs, 15 yards for first down.
-- Touchdown + 1/2-point conversion tries.
-- Fast pace and simple UI prompts.
+## Street Games Mode (Roadmap)
+Later, Street Up will include a long-term team-building mode: **Street Games**.
+- Inspired by dynasty/team-build progression loops.
+- Build a squad from neighborhood talent.
+- Grow roster quality over time.
+- Progress through stronger competition.
 
-## Why This Ruleset Works
-- Easy for new players to learn quickly.
-- Keeps football strategy (routes, reads, coverage) without full 11-man complexity.
-- Supports quick online and local matches.
+## v0 Success Checklist
+- Green field loads.
+- Blue and red end zones are visible and correct.
+- 7 blue beans + 7 red beans spawn.
+- Ball/bean tracks possession.
+- Two AI teams run continuously.
+- Possessions change after stops/scores.
+- Score updates when end zone reached.
 
-## Next Build Targets
-- Player movement and camera tuning (Madden-like but simpler).
-- Snap, passing, catching, and tackling/tagging loops.
-- First-down and scoring logic.
-- Basic play-call screen with a small route tree.
+## What Comes Next After v0
+- Better route logic and pursuit angles.
+- Play-call presets.
+- Improved tackling/contact outcomes.
+- Human control takeover for one or more players.
+- Online/local game options.
