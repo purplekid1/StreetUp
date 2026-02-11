@@ -21,6 +21,8 @@ const QB_THROW_TIME_MAX := 2.6
 const CAMERA_HEIGHT := 35.0
 const CAMERA_BACK_OFFSET := 26.0
 const THROW_INTERCEPT_RADIUS := 1.15
+const QB_SHADE_FACTOR := 1.25
+const DEFENDER_SHADE_FACTOR := 0.68
 
 const RECEIVER_INDICES := [0, 1, 5, 6]
 const CENTER_INDEX := 2
@@ -151,11 +153,11 @@ func _update_line_markers() -> void:
 func _spawn_teams() -> void:
 	for i in TEAM_SIZE:
 		var lane = lerp(-FIELD_HALF_WIDTH + 2.5, FIELD_HALF_WIDTH - 2.5, float(i) / float(max(1, TEAM_SIZE - 1)))
-		var blue := _spawn_player(Color(0.2, 0.4, 1.0, 1.0), Vector3(lane, START_Y, -10.0), "blue", i)
+		var blue := _spawn_player(_player_color("blue", i), Vector3(lane, START_Y, -10.0), "blue", i)
 		blue_team.append(blue)
 		all_players.append(blue)
 
-		var red := _spawn_player(Color(1.0, 0.2, 0.2, 1.0), Vector3(lane, START_Y, 10.0), "red", i)
+		var red := _spawn_player(_player_color("red", i), Vector3(lane, START_Y, 10.0), "red", i)
 		red_team.append(red)
 		all_players.append(red)
 
@@ -393,17 +395,29 @@ func _try_qb_throw() -> void:
 	var best_receiver := -1
 	var best_score := -99999.0
 	var best_target := Vector3.ZERO
+	var qb := offense_team[QB_INDEX]
 	for receiver_id in RECEIVER_INDICES:
 		var receiver := offense_team[receiver_id]
-		var lead_distance = clamp(_player_speed(receiver, true) * 0.28, 1.2, 3.6)
+		var throw_distance := qb.position.distance_to(receiver.position)
+		var travel_time := clamp(throw_distance / BALL_SPEED, 0.12, 0.95)
+		var lead_distance = clamp(_player_speed(receiver, true) * travel_time * 0.9, 1.0, 6.0)
 		var candidate_target := receiver.position + Vector3(0.0, 0.0, offense_direction * lead_distance)
-		var score := receiver.position.z * offense_direction
+		candidate_target.x = clamp(candidate_target.x, -FIELD_HALF_WIDTH + 1.0, FIELD_HALF_WIDTH - 1.0)
+		candidate_target.z = clamp(candidate_target.z, -FIELD_HALF_LENGTH + ENDZONE_DEPTH + 0.5, FIELD_HALF_LENGTH - ENDZONE_DEPTH - 0.5)
+
+		var score := candidate_target.z * offense_direction
 		var defender_id := int(receiver_assignments.get(receiver_id, -1))
 		if defender_id != -1:
-			var separation := receiver.position.distance_to(defense_team[defender_id].position)
-			score += separation * 3.0 * _player_awareness(offense_team[QB_INDEX])
+			var assigned_defender := defense_team[defender_id]
+			var projected_separation := candidate_target.distance_to(assigned_defender.position)
+			score += projected_separation * 4.2 * _player_awareness(qb)
 
-		var lane_penalty := _pass_lane_penalty(offense_team[QB_INDEX].position, candidate_target)
+		var closest_contest := _closest_defender_distance_to(candidate_target)
+		score += closest_contest * 2.3
+		if closest_contest < CATCH_RADIUS * 1.7:
+			score -= 45.0
+
+		var lane_penalty := _pass_lane_penalty(qb.position, candidate_target)
 		score -= lane_penalty
 		if abs(receiver.position.x) > FIELD_HALF_WIDTH - 2.0:
 			score -= 2.5
@@ -417,7 +431,6 @@ func _try_qb_throw() -> void:
 	if best_receiver == -1:
 		return
 
-	var qb := offense_team[QB_INDEX]
 	if _pass_lane_penalty(qb.position, best_target) >= 1000.0:
 		return
 
@@ -427,6 +440,14 @@ func _try_qb_throw() -> void:
 	ball_target_pos = best_target
 	ball_velocity = (ball_target_pos - ball.position).normalized() * BALL_SPEED
 	print("%s QB THROW -> WR%d" % [possession.to_upper(), best_receiver])
+
+func _closest_defender_distance_to(target_pos: Vector3) -> float:
+	var best := 9999.0
+	for defender in defense_team:
+		var dist := defender.position.distance_to(target_pos)
+		if dist < best:
+			best = dist
+	return best
 
 func _pass_lane_penalty(from_pos: Vector3, to_pos: Vector3) -> float:
 	var lane := to_pos - from_pos
@@ -647,3 +668,11 @@ func _make_material(color: Color) -> StandardMaterial3D:
 	material.albedo_color = color
 	material.roughness = 0.9
 	return material
+
+func _player_color(team_name: String, role_slot: int) -> Color:
+	var base := Color(0.2, 0.4, 1.0, 1.0) if team_name == "blue" else Color(1.0, 0.2, 0.2, 1.0)
+	if role_slot == QB_INDEX:
+		return base.lightened(clamp(QB_SHADE_FACTOR - 1.0, 0.0, 0.9))
+	if role_slot in RECEIVER_INDICES:
+		return base
+	return base.darkened(clamp(1.0 - DEFENDER_SHADE_FACTOR, 0.0, 0.9))
