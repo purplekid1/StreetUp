@@ -20,6 +20,7 @@ const QB_THROW_TIME_MIN := 1.0
 const QB_THROW_TIME_MAX := 2.6
 const CAMERA_HEIGHT := 35.0
 const CAMERA_BACK_OFFSET := 26.0
+const THROW_INTERCEPT_RADIUS := 1.15
 
 const RECEIVER_INDICES := [0, 1, 5, 6]
 const CENTER_INDEX := 2
@@ -149,7 +150,7 @@ func _update_line_markers() -> void:
 
 func _spawn_teams() -> void:
 	for i in TEAM_SIZE:
-		var lane = lerp(-FIELD_HALF_WIDTH + 2.5, FIELD_HALF_WIDTH - 2.5, float(i) / float(max(1, TEAM_SIZE - 1)))
+		var lane := lerp(-FIELD_HALF_WIDTH + 2.5, FIELD_HALF_WIDTH - 2.5, float(i) / float(max(1, TEAM_SIZE - 1)))
 		var blue := _spawn_player(Color(0.2, 0.4, 1.0, 1.0), Vector3(lane, START_Y, -10.0), "blue", i)
 		blue_team.append(blue)
 		all_players.append(blue)
@@ -162,6 +163,7 @@ func _spawn_player(color: Color, spawn_position: Vector3, team_name: String, rol
 	var body := Node3D.new()
 	var mesh := MeshInstance3D.new()
 	var capsule := CapsuleMesh.new()
+	capsule.mid_height = 1.2
 	capsule.radius = 0.45
 	mesh.mesh = capsule
 	mesh.material_override = _make_material(color)
@@ -248,8 +250,8 @@ func _assign_formations() -> void:
 func _assign_coverage() -> void:
 	var defenders := [1, 2, 3, 4]
 	for idx in RECEIVER_INDICES.size():
-		var receiver_id = RECEIVER_INDICES[idx]
-		var defender_id = defenders[idx % defenders.size()]
+		var receiver_id := RECEIVER_INDICES[idx]
+		var defender_id := defenders[idx % defenders.size()]
 		receiver_assignments[receiver_id] = defender_id
 		defender_assignments[defender_id] = receiver_id
 
@@ -390,31 +392,62 @@ func _run_defense_ai(delta: float) -> void:
 
 func _try_qb_throw() -> void:
 	var best_receiver := -1
-	var best_score := -9999.0
+	var best_score := -99999.0
+	var best_target := Vector3.ZERO
 	for receiver_id in RECEIVER_INDICES:
 		var receiver := offense_team[receiver_id]
+		var lead_distance := clamp(_player_speed(receiver, true) * 0.28, 1.2, 3.6)
+		var candidate_target := receiver.position + Vector3(0.0, 0.0, offense_direction * lead_distance)
 		var score := receiver.position.z * offense_direction
 		var defender_id := int(receiver_assignments.get(receiver_id, -1))
 		if defender_id != -1:
 			var separation := receiver.position.distance_to(defense_team[defender_id].position)
 			score += separation * 3.0 * _player_awareness(offense_team[QB_INDEX])
+
+		var lane_penalty := _pass_lane_penalty(offense_team[QB_INDEX].position, candidate_target)
+		score -= lane_penalty
 		if abs(receiver.position.x) > FIELD_HALF_WIDTH - 2.0:
 			score -= 2.5
+		if lane_penalty >= 1000.0:
+			score -= 50.0
 		if score > best_score:
 			best_score = score
 			best_receiver = receiver_id
+			best_target = candidate_target
 
 	if best_receiver == -1:
 		return
 
 	var qb := offense_team[QB_INDEX]
+	if _pass_lane_penalty(qb.position, best_target) >= 1000.0:
+		return
+
 	ball_in_air = true
 	ball.position = qb.position + Vector3(0.0, 0.9, 0.0)
 	ball_target_player = best_receiver
-	var lead := Vector3(0.0, 0.0, offense_direction * 2.6)
-	ball_target_pos = offense_team[best_receiver].position + lead
+	ball_target_pos = best_target
 	ball_velocity = (ball_target_pos - ball.position).normalized() * BALL_SPEED
 	print("%s QB THROW -> WR%d" % [possession.to_upper(), best_receiver])
+
+func _pass_lane_penalty(from_pos: Vector3, to_pos: Vector3) -> float:
+	var lane := to_pos - from_pos
+	var lane_len := lane.length()
+	if lane_len <= 0.001:
+		return 1000.0
+	var lane_dir := lane / lane_len
+	var penalty := 0.0
+	for defender in defense_team:
+		var defender_offset := defender.position - from_pos
+		var along := defender_offset.dot(lane_dir)
+		if along <= 0.3 or along >= lane_len - 0.3:
+			continue
+		var closest := from_pos + lane_dir * along
+		var lateral := defender.position.distance_to(closest)
+		if lateral < THROW_INTERCEPT_RADIUS * 0.55:
+			return 1000.0
+		if lateral < THROW_INTERCEPT_RADIUS * 1.8:
+			penalty += (THROW_INTERCEPT_RADIUS * 1.8 - lateral) * 8.0
+	return penalty
 
 func _resolve_player_collisions() -> void:
 	for i in all_players.size():
@@ -591,7 +624,7 @@ func offense_sign() -> float:
 	return 1.0 if possession == "blue" else -1.0
 
 func _player_stat(player: Node3D, key: String, fallback: float) -> float:
-	var stat = player_stats.get(player.get_instance_id(), {})
+	var stat := player_stats.get(player.get_instance_id(), {})
 	return float(stat.get(key, fallback))
 
 func _player_speed(player: Node3D, sprint: bool) -> float:
