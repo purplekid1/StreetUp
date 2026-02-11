@@ -149,7 +149,7 @@ func _update_line_markers() -> void:
 
 func _spawn_teams() -> void:
 	for i in TEAM_SIZE:
-		var lane := lerp(-FIELD_HALF_WIDTH + 2.5, FIELD_HALF_WIDTH - 2.5, float(i) / float(max(1, TEAM_SIZE - 1)))
+		var lane = lerp(-FIELD_HALF_WIDTH + 2.5, FIELD_HALF_WIDTH - 2.5, float(i) / float(max(1, TEAM_SIZE - 1)))
 		var blue := _spawn_player(Color(0.2, 0.4, 1.0, 1.0), Vector3(lane, START_Y, -10.0), "blue", i)
 		blue_team.append(blue)
 		all_players.append(blue)
@@ -162,7 +162,6 @@ func _spawn_player(color: Color, spawn_position: Vector3, team_name: String, rol
 	var body := Node3D.new()
 	var mesh := MeshInstance3D.new()
 	var capsule := CapsuleMesh.new()
-	capsule.mid_height = 1.2
 	capsule.radius = 0.45
 	mesh.mesh = capsule
 	mesh.material_override = _make_material(color)
@@ -249,8 +248,8 @@ func _assign_formations() -> void:
 func _assign_coverage() -> void:
 	var defenders := [1, 2, 3, 4]
 	for idx in RECEIVER_INDICES.size():
-		var receiver_id := RECEIVER_INDICES[idx]
-		var defender_id := defenders[idx % defenders.size()]
+		var receiver_id = RECEIVER_INDICES[idx]
+		var defender_id = defenders[idx % defenders.size()]
 		receiver_assignments[receiver_id] = defender_id
 		defender_assignments[defender_id] = receiver_id
 
@@ -592,7 +591,7 @@ func offense_sign() -> float:
 	return 1.0 if possession == "blue" else -1.0
 
 func _player_stat(player: Node3D, key: String, fallback: float) -> float:
-	var stat := player_stats.get(player.get_instance_id(), {})
+	var stat = player_stats.get(player.get_instance_id(), {})
 	return float(stat.get(key, fallback))
 
 func _player_speed(player: Node3D, sprint: bool) -> float:
