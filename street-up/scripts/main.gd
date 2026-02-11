@@ -4,14 +4,14 @@ const TEAM_SIZE := 7
 const FIELD_HALF_LENGTH := 40.0
 const FIELD_HALF_WIDTH := 20.0
 const ENDZONE_DEPTH := 8.0
-const PLAYER_SPEED := 6.5
-const SPRINT_SPEED := 8.2
+const BASE_PLAYER_SPEED := 6.8
+const BASE_SPRINT_SPEED := 8.6
 const BALL_SPEED := 23.0
 const CATCH_RADIUS := 1.4
-const TACKLE_DISTANCE := 1.4
+const TACKLE_DISTANCE := 1.45
 const PLAYER_RADIUS := 0.58
 const COLLISION_PUSH := 0.9
-const CONTACT_SLOWDOWN := 0.55
+const CONTACT_SLOWDOWN := 0.65
 const START_Y := 0.6
 const PRE_SNAP_TIME := 0.8
 const MAX_PLAYS_PER_DRIVE := 4
@@ -30,6 +30,8 @@ var red_team: Array[Node3D] = []
 var all_players: Array[Node3D] = []
 var ball: Node3D
 var follow_camera: Camera3D
+
+var player_stats: Dictionary = {}
 
 var blue_score := 0
 var red_score := 0
@@ -99,7 +101,6 @@ func _add_field() -> void:
 	var ground_mesh := PlaneMesh.new()
 	ground_mesh.size = Vector2(FIELD_HALF_WIDTH * 2.0, FIELD_HALF_LENGTH * 2.0)
 	ground.mesh = ground_mesh
-	ground.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 	ground.material_override = _make_material(Color(0.12, 0.45, 0.16, 1.0))
 	add_child(ground)
 
@@ -107,7 +108,6 @@ func _add_field() -> void:
 	var blue_mesh := PlaneMesh.new()
 	blue_mesh.size = Vector2(FIELD_HALF_WIDTH * 2.0, ENDZONE_DEPTH)
 	blue_endzone.mesh = blue_mesh
-	blue_endzone.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 	blue_endzone.position = Vector3(0.0, 0.01, -FIELD_HALF_LENGTH + ENDZONE_DEPTH * 0.5)
 	blue_endzone.material_override = _make_material(Color(0.1, 0.28, 0.9, 1.0))
 	add_child(blue_endzone)
@@ -116,7 +116,6 @@ func _add_field() -> void:
 	var red_mesh := PlaneMesh.new()
 	red_mesh.size = Vector2(FIELD_HALF_WIDTH * 2.0, ENDZONE_DEPTH)
 	red_endzone.mesh = red_mesh
-	red_endzone.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 	red_endzone.position = Vector3(0.0, 0.01, FIELD_HALF_LENGTH - ENDZONE_DEPTH * 0.5)
 	red_endzone.material_override = _make_material(Color(0.85, 0.12, 0.14, 1.0))
 	add_child(red_endzone)
@@ -124,15 +123,15 @@ func _add_field() -> void:
 func _spawn_teams() -> void:
 	for i in TEAM_SIZE:
 		var lane := lerp(-FIELD_HALF_WIDTH + 2.5, FIELD_HALF_WIDTH - 2.5, float(i) / float(max(1, TEAM_SIZE - 1)))
-		var blue := _spawn_player(Color(0.2, 0.4, 1.0, 1.0), Vector3(lane, START_Y, -10.0))
+		var blue := _spawn_player(Color(0.2, 0.4, 1.0, 1.0), Vector3(lane, START_Y, -10.0), "blue", i)
 		blue_team.append(blue)
 		all_players.append(blue)
 
-		var red := _spawn_player(Color(1.0, 0.2, 0.2, 1.0), Vector3(lane, START_Y, 10.0))
+		var red := _spawn_player(Color(1.0, 0.2, 0.2, 1.0), Vector3(lane, START_Y, 10.0), "red", i)
 		red_team.append(red)
 		all_players.append(red)
 
-func _spawn_player(color: Color, spawn_position: Vector3) -> Node3D:
+func _spawn_player(color: Color, spawn_position: Vector3, team_name: String, role_slot: int) -> Node3D:
 	var body := Node3D.new()
 	var mesh := MeshInstance3D.new()
 	var capsule := CapsuleMesh.new()
@@ -143,6 +142,16 @@ func _spawn_player(color: Color, spawn_position: Vector3) -> Node3D:
 	body.add_child(mesh)
 	body.position = spawn_position
 	add_child(body)
+
+	var stat := {
+		"speed": randf_range(BASE_PLAYER_SPEED * 0.88, BASE_PLAYER_SPEED * 1.18),
+		"sprint": randf_range(BASE_SPRINT_SPEED * 0.88, BASE_SPRINT_SPEED * 1.18),
+		"tackle": randf_range(0.8, 1.25),
+		"awareness": randf_range(0.75, 1.3),
+		"role_slot": role_slot,
+		"team": team_name
+	}
+	player_stats[body.get_instance_id()] = stat
 	return body
 
 func _spawn_ball() -> void:
@@ -196,7 +205,7 @@ func _assign_formations() -> void:
 
 	for i in TEAM_SIZE:
 		var x := base_x[i]
-		var defense_z := line_of_scrimmage_z + offense_direction * 2.1
+		var defense_z := line_of_scrimmage_z + offense_direction * 2.0
 		defense_team[i].position = Vector3(x, START_Y, defense_z)
 
 	for i in RECEIVER_INDICES:
@@ -248,7 +257,7 @@ func _run_offense_ai(delta: float) -> void:
 	if play_type == "pass":
 		_move_qb_for_pass(qb, delta)
 		_move_receivers(delta)
-		_move_support_blockers(delta)
+		_move_off_ball_support(delta)
 		if play_clock >= QB_THROW_TIME_MIN and not ball_in_air:
 			_try_qb_throw()
 		if play_clock >= QB_THROW_TIME_MAX and not ball_in_air:
@@ -263,40 +272,50 @@ func _run_offense_ai(delta: float) -> void:
 				ball_carrier_index = RB_INDEX
 			_move_runner(ball_carrier_index, delta, false)
 			_move_receivers(delta)
-		_move_support_blockers(delta)
+		_move_off_ball_support(delta)
 
 func _move_qb_for_pass(qb: Node3D, delta: float) -> void:
-	var target := Vector3(qb.position.x, START_Y, line_of_scrimmage_z - offense_direction * 6.5)
-	qb.position = qb.position.move_toward(target, PLAYER_SPEED * delta)
+	var target := Vector3(qb.position.x, START_Y, line_of_scrimmage_z - offense_direction * 6.3)
+	qb.position = qb.position.move_toward(target, _player_speed(qb, false) * delta)
 	if ball_carrier_index == qb_index and not ball_in_air:
 		ball.position = qb.position + Vector3(0.0, 0.85, 0.0)
 
 func _move_qb_for_handoff(qb: Node3D, delta: float) -> void:
 	var target := Vector3(-1.2, START_Y, line_of_scrimmage_z - offense_direction * 4.6)
-	qb.position = qb.position.move_toward(target, PLAYER_SPEED * delta)
+	qb.position = qb.position.move_toward(target, _player_speed(qb, false) * delta)
 	ball.position = qb.position + Vector3(0.0, 0.85, 0.0)
 
-func _move_support_blockers(delta: float) -> void:
-	for i in [0, SLOT_INDEX]:
-		if i == qb_index and play_type == "pass":
-			continue
+func _move_off_ball_support(delta: float) -> void:
+	var carrier := offense_team[ball_carrier_index]
+	var carrier_is_receiver := ball_carrier_index in RECEIVER_INDICES
+	for i in TEAM_SIZE:
 		if i == ball_carrier_index:
 			continue
-		var push_target := offense_team[i].position + Vector3(0.0, 0.0, offense_direction * 3.0)
-		offense_team[i].position = offense_team[i].position.move_toward(push_target, PLAYER_SPEED * 0.7 * delta)
+		if i in RECEIVER_INDICES and not carrier_is_receiver:
+			continue
+		var helper := offense_team[i]
+		var nearest_defender_idx := _nearest_specific_defender_to(helper.position)
+		var target := helper.position + Vector3(0.0, 0.0, offense_direction * 2.0)
+		if nearest_defender_idx != -1:
+			var defender := defense_team[nearest_defender_idx]
+			var protect_pos := carrier.position.lerp(defender.position, 0.5)
+			target = Vector3(protect_pos.x, START_Y, protect_pos.z)
+		helper.position = helper.position.move_toward(target, _player_speed(helper, false) * 0.85 * delta)
 
 func _move_receivers(delta: float) -> void:
 	for receiver_id in RECEIVER_INDICES:
+		if receiver_id == ball_carrier_index:
+			continue
 		var route: Array = route_targets.get(receiver_id, [])
 		if route.is_empty():
 			continue
 		var step := int(receiver_progress.get(receiver_id, 0))
 		if step >= route.size():
 			var continue_target := offense_team[receiver_id].position + Vector3(0.0, 0.0, offense_direction * 4.0)
-			offense_team[receiver_id].position = offense_team[receiver_id].position.move_toward(continue_target, SPRINT_SPEED * delta)
+			offense_team[receiver_id].position = offense_team[receiver_id].position.move_toward(continue_target, _player_speed(offense_team[receiver_id], true) * delta)
 			continue
 		var target: Vector3 = route[step]
-		offense_team[receiver_id].position = offense_team[receiver_id].position.move_toward(target, SPRINT_SPEED * delta)
+		offense_team[receiver_id].position = offense_team[receiver_id].position.move_toward(target, _player_speed(offense_team[receiver_id], true) * delta)
 		if offense_team[receiver_id].position.distance_to(target) < 0.8:
 			receiver_progress[receiver_id] = step + 1
 
@@ -308,26 +327,27 @@ func _move_runner(runner_index: int, delta: float, scramble_mode: bool) -> void:
 	if nearest != -1:
 		var nearest_pos := defense_team[nearest].position
 		evade_x = clamp(runner.position.x - nearest_pos.x, -1.0, 1.0)
-		if runner.position.distance_to(nearest_pos) < PLAYER_RADIUS * 2.1:
+		if runner.position.distance_to(nearest_pos) < PLAYER_RADIUS * 2.0:
 			contact_penalty = CONTACT_SLOWDOWN
-	var forward := offense_direction * 5.0 * contact_penalty
-	var side := evade_x * (2.0 if scramble_mode else 3.5)
+	var forward := offense_direction * 5.2 * contact_penalty
+	var side := evade_x * (2.0 if scramble_mode else 3.6)
 	var target := runner.position + Vector3(side, 0.0, forward)
 	target.x = clamp(target.x, -FIELD_HALF_WIDTH + 1.2, FIELD_HALF_WIDTH - 1.2)
-	runner.position = runner.position.move_toward(target, SPRINT_SPEED * delta)
+	runner.position = runner.position.move_toward(target, _player_speed(runner, true) * delta)
 	if ball_carrier_index == runner_index and not ball_in_air:
 		ball.position = runner.position + Vector3(0.0, 0.85, 0.0)
 
 func _run_defense_ai(delta: float) -> void:
+	var carrier_pos := offense_team[ball_carrier_index].position
+	var ball_past_los := (carrier_pos.z - line_of_scrimmage_z) * offense_direction > 0.5
 	var rushers := [0, 6]
 	for defender_id in TEAM_SIZE:
 		var defender := defense_team[defender_id]
 		var target := defender.position
-		if defender_id in rushers:
-			var qb_target := offense_team[qb_index].position
-			if ball_carrier_index != qb_index:
-				qb_target = offense_team[ball_carrier_index].position
-			target = Vector3(qb_target.x, START_Y, qb_target.z)
+		if ball_past_los or ball_carrier_index != qb_index:
+			target = carrier_pos
+		elif defender_id in rushers:
+			target = offense_team[qb_index].position
 		else:
 			var receiver_id := int(defender_assignments.get(defender_id, -1))
 			if receiver_id != -1:
@@ -335,9 +355,8 @@ func _run_defense_ai(delta: float) -> void:
 				var trail := receiver.position - Vector3(0.0, 0.0, offense_direction * 1.6)
 				target = Vector3(trail.x, START_Y, trail.z)
 			else:
-				var deep := line_of_scrimmage_z + offense_direction * 13.0
-				target = Vector3(defender.position.x, START_Y, deep)
-		defender.position = defender.position.move_toward(target, PLAYER_SPEED * delta)
+				target = carrier_pos
+		defender.position = defender.position.move_toward(Vector3(target.x, START_Y, target.z), _defender_chase_speed(defender) * delta)
 
 func _try_qb_throw() -> void:
 	var best_receiver := -1
@@ -348,7 +367,7 @@ func _try_qb_throw() -> void:
 		var defender_id := int(receiver_assignments.get(receiver_id, -1))
 		if defender_id != -1:
 			var separation := receiver.position.distance_to(defense_team[defender_id].position)
-			score += separation * 3.0
+			score += separation * 3.0 * _player_awareness(offense_team[qb_index])
 		if abs(receiver.position.x) > FIELD_HALF_WIDTH - 2.0:
 			score -= 2.5
 		if score > best_score:
@@ -362,7 +381,7 @@ func _try_qb_throw() -> void:
 	ball_in_air = true
 	ball.position = qb.position + Vector3(0.0, 0.9, 0.0)
 	ball_target_player = best_receiver
-	var lead := Vector3(0.0, 0.0, offense_direction * 2.8)
+	var lead := Vector3(0.0, 0.0, offense_direction * 2.6)
 	ball_target_pos = offense_team[best_receiver].position + lead
 	ball_velocity = (ball_target_pos - ball.position).normalized() * BALL_SPEED
 	print("%s QB THROW -> WR%d" % [possession.to_upper(), best_receiver])
@@ -447,7 +466,8 @@ func _check_play_end() -> void:
 		return
 
 	for defender in defense_team:
-		if defender.position.distance_to(carrier.position) <= TACKLE_DISTANCE:
+		var tackle_power := _player_tackle(defender)
+		if defender.position.distance_to(carrier.position) <= TACKLE_DISTANCE * tackle_power:
 			_end_play_at(carrier.position, "tackle")
 			return
 
@@ -505,8 +525,38 @@ func _nearest_defender_to(pos: Vector3) -> int:
 			best_idx = i
 	return best_idx
 
+func _nearest_specific_defender_to(pos: Vector3) -> int:
+	var best_idx := -1
+	var best_dist := 9999.0
+	for i in defense_team.size():
+		var dist := defense_team[i].position.distance_to(pos)
+		if dist < best_dist:
+			best_dist = dist
+			best_idx = i
+	return best_idx
+
 func offense_sign() -> float:
 	return 1.0 if possession == "blue" else -1.0
+
+func _player_stat(player: Node3D, key: String, fallback: float) -> float:
+	var stat := player_stats.get(player.get_instance_id(), {})
+	return float(stat.get(key, fallback))
+
+func _player_speed(player: Node3D, sprint: bool) -> float:
+	if sprint:
+		return _player_stat(player, "sprint", BASE_SPRINT_SPEED)
+	return _player_stat(player, "speed", BASE_PLAYER_SPEED)
+
+func _defender_chase_speed(player: Node3D) -> float:
+	var sprint := _player_speed(player, true)
+	var awareness := _player_awareness(player)
+	return sprint * (1.0 + (awareness - 1.0) * 0.25)
+
+func _player_tackle(player: Node3D) -> float:
+	return _player_stat(player, "tackle", 1.0)
+
+func _player_awareness(player: Node3D) -> float:
+	return _player_stat(player, "awareness", 1.0)
 
 func _make_material(color: Color) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()

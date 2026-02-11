@@ -80,6 +80,16 @@ For v0, role assignment is light and can change during play.
 - Tackles and incompletions end plays; downs and distance update every snap.
 
 
+## Random Player Attributes (Current Prototype)
+- Each player spawns with random speed, sprint, awareness, and tackle ratings.
+- Fast defenders can chase down breakaway carriers instead of always losing the race.
+- Stat ranges stay close enough for fairness, but still create play-to-play variety.
+
+## Pursuit and Contain Rules (Current Prototype)
+- If the ball carrier gets past the line, the full defense switches to chase mode.
+- Defenders do not stop at old assignments once the carrier breaks contain.
+- Offense tries to protect the carrier with non-carrier teammates while receivers run routes until the catch event.
+
 ## Contact + Camera Prototype Rules
 - Players have body collision/push behavior so teams must fight through traffic.
 - Ball carriers lose speed when defenders make close contact.
