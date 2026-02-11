@@ -13,7 +13,16 @@ const PLAYER_RADIUS := 0.58
 const COLLISION_PUSH := 0.9
 const CONTACT_SLOWDOWN := 0.65
 const START_Y := 0.6
-const PRE_SNAP_TIME := 0.8
+const PRE_SNAP_TIME := 1.2
+const ROUTE_PREVIEW_TIME := 1.0
+const ROUTE_MARKER_WIDTH := 0.26
+const BALL_MARKER_SIZE := 0.9
+const BALL_MARKER_HEIGHT := 0.04
+const PUNT_HANG_TIME := 1.9
+const PUNT_DISTANCE := 22.0
+const PAT_SNAP_TIME := 0.7
+const PAT_KICK_TIME := 1.2
+const PAT_SUCCESS_WIDTH := 2.9
 const MAX_PLAYS_PER_DRIVE := 4
 const FIRST_DOWN_YARDS := 12.0
 const QB_THROW_TIME_MIN := 1.0
@@ -66,6 +75,12 @@ var ball_in_air := false
 var ball_velocity := Vector3.ZERO
 var ball_target_player := -1
 var ball_target_pos := Vector3.ZERO
+var ball_landing_marker: MeshInstance3D
+var route_markers: Array[Node3D] = []
+var ball_mode := "normal"
+var turnover_return_active := false
+var pat_target_z := 0.0
+var pat_setup_team := ""
 
 func _ready() -> void:
 	randomize()
@@ -79,13 +94,22 @@ func _physics_process(delta: float) -> void:
 	if play_phase == "pre_snap":
 		_run_presnap_alignment()
 		if play_clock >= PRE_SNAP_TIME:
+			_clear_route_markers()
 			play_phase = "live"
 			play_clock = 0.0
 	elif play_phase == "live":
 		_run_live_play(delta)
+	elif play_phase == "pat_setup":
+		_run_pat_setup()
+		if play_clock >= PAT_SNAP_TIME:
+			play_phase = "pat_live"
+			play_clock = 0.0
+	elif play_phase == "pat_live":
+		_run_pat_live(delta)
 
 	_resolve_player_collisions()
 	_update_ball(delta)
+	_update_ball_landing_marker()
 	_update_camera(delta)
 	_check_play_end()
 
@@ -101,7 +125,9 @@ func _setup_world() -> void:
 	add_child(follow_camera)
 
 	_add_field()
+	_add_goal_posts()
 	_add_line_markers()
+	_add_ball_landing_marker()
 
 func _add_field() -> void:
 	var ground := MeshInstance3D.new()
@@ -206,13 +232,18 @@ func _prepare_new_play() -> void:
 	play_clock = 0.0
 	ball_in_air = false
 	ball_velocity = Vector3.ZERO
+	ball_mode = "normal"
+	turnover_return_active = false
 	ball_target_player = -1
 	route_targets.clear()
 	receiver_progress.clear()
 	receiver_assignments.clear()
 	defender_assignments.clear()
 
-	play_type = "run" if randf() < 0.4 else "pass"
+	if down == MAX_PLAYS_PER_DRIVE:
+		play_type = _choose_fourth_down_call()
+	else:
+		play_type = "run" if randf() < 0.4 else "pass"
 	ball_carrier_index = QB_INDEX
 	_assign_formations()
 	_update_line_markers()
@@ -278,6 +309,9 @@ func _run_presnap_alignment() -> void:
 		offense_team[i].position.y = START_Y
 		defense_team[i].position.y = START_Y
 
+	if play_clock <= ROUTE_PREVIEW_TIME:
+		_draw_route_markers()
+
 	if ball_carrier_index == QB_INDEX:
 		ball.position = offense_team[QB_INDEX].position + Vector3(0.0, 0.85, 0.0)
 
@@ -287,7 +321,13 @@ func _run_live_play(delta: float) -> void:
 
 func _run_offense_ai(delta: float) -> void:
 	var qb := offense_team[QB_INDEX]
-	if play_type == "pass":
+	if play_type == "punt":
+		_move_qb_for_pass(qb, delta)
+		_move_receivers(delta)
+		_move_off_ball_support(delta)
+		if play_clock >= 0.9 and not ball_in_air:
+			_start_punt()
+	elif play_type == "pass":
 		_move_qb_for_pass(qb, delta)
 		_move_receivers(delta)
 		_move_off_ball_support(delta)
@@ -336,6 +376,12 @@ func _move_off_ball_support(delta: float) -> void:
 		helper.position = helper.position.move_toward(target, _player_speed(helper, false) * 0.85 * delta)
 
 func _move_receivers(delta: float) -> void:
+	if ball_in_air and ball_mode == "pass":
+		var chase_id := _closest_offense_receiver_to(ball_target_pos)
+		if chase_id != -1 and chase_id != ball_carrier_index:
+			var chase_target := Vector3(ball_target_pos.x, START_Y, ball_target_pos.z)
+			offense_team[chase_id].position = offense_team[chase_id].position.move_toward(chase_target, _player_speed(offense_team[chase_id], true) * delta * 1.12)
+
 	for receiver_id in RECEIVER_INDICES:
 		if receiver_id == ball_carrier_index:
 			continue
@@ -400,8 +446,9 @@ func _try_qb_throw() -> void:
 		var receiver := offense_team[receiver_id]
 		var throw_distance := qb.position.distance_to(receiver.position)
 		var travel_time := clamp(throw_distance / BALL_SPEED, 0.12, 0.95)
-		var lead_distance = clamp(_player_speed(receiver, true) * travel_time * 0.9, 1.0, 6.0)
-		var candidate_target := receiver.position + Vector3(0.0, 0.0, offense_direction * lead_distance)
+		var lead_distance = clamp(_player_speed(receiver, true) * travel_time * 1.12, 1.4, 7.2)
+		var route_dir := _receiver_route_direction(receiver_id)
+		var candidate_target := receiver.position + route_dir * lead_distance
 		candidate_target.x = clamp(candidate_target.x, -FIELD_HALF_WIDTH + 1.0, FIELD_HALF_WIDTH - 1.0)
 		candidate_target.z = clamp(candidate_target.z, -FIELD_HALF_LENGTH + ENDZONE_DEPTH + 0.5, FIELD_HALF_LENGTH - ENDZONE_DEPTH - 0.5)
 
@@ -435,6 +482,7 @@ func _try_qb_throw() -> void:
 		return
 
 	ball_in_air = true
+	ball_mode = "pass"
 	ball.position = qb.position + Vector3(0.0, 0.9, 0.0)
 	ball_target_player = best_receiver
 	ball_target_pos = best_target
@@ -498,44 +546,66 @@ func _clamp_players_to_field() -> void:
 func _update_ball(delta: float) -> void:
 	if ball_in_air:
 		ball.position += ball_velocity * delta
-		if ball.position.distance_to(ball_target_pos) <= CATCH_RADIUS:
+		if ball_mode == "punt" and ball.position.distance_to(ball_target_pos) <= CATCH_RADIUS:
+			_resolve_punt_landing()
+		elif ball_mode == "pass" and ball.position.distance_to(ball_target_pos) <= CATCH_RADIUS:
 			_resolve_pass_target()
 	else:
 		var carrier := offense_team[ball_carrier_index]
 		ball.position = carrier.position + Vector3(0.0, 0.85, 0.0)
 
+func _update_ball_landing_marker() -> void:
+	if ball_landing_marker == null:
+		return
+	if ball_in_air:
+		ball_landing_marker.visible = true
+		ball_landing_marker.position = Vector3(ball_target_pos.x, 0.02, ball_target_pos.z)
+	else:
+		ball_landing_marker.visible = false
+
 func _update_camera(delta: float) -> void:
 	if follow_camera == null or ball == null:
 		return
+	var lateral_sway := sin(Time.get_ticks_msec() * 0.0014) * 3.0
 	var forward_hint := -offense_direction if possession == "blue" else offense_direction
-	var desired := ball.position + Vector3(0.0, CAMERA_HEIGHT, CAMERA_BACK_OFFSET * forward_hint)
-	follow_camera.position = follow_camera.position.lerp(desired, clamp(delta * 3.2, 0.0, 1.0))
-	follow_camera.look_at(ball.position, Vector3.UP)
+	var height := CAMERA_HEIGHT + (4.0 if ball_in_air else 0.0)
+	var desired := ball.position + Vector3(lateral_sway, height, CAMERA_BACK_OFFSET * forward_hint)
+	follow_camera.position = follow_camera.position.lerp(desired, clamp(delta * 2.6, 0.0, 1.0))
+	var look_target := ball_target_pos if ball_in_air else ball.position
+	follow_camera.look_at(look_target, Vector3.UP)
 
 func _resolve_pass_target() -> void:
 	var receiver := offense_team[ball_target_player]
 	for defender in defense_team:
 		if defender.position.distance_to(ball.position) <= CATCH_RADIUS:
 			ball_in_air = false
+			ball_mode = "normal"
 			ball_carrier_index = defense_team.find(defender)
 			_turnover_after_interception(defense_team[ball_carrier_index].position)
 			return
 
 	if receiver.position.distance_to(ball.position) <= CATCH_RADIUS * 1.25:
 		ball_in_air = false
+		ball_mode = "normal"
 		ball_carrier_index = ball_target_player
 		return
 
 	ball_in_air = false
+	ball_mode = "normal"
 	_end_play_at(ball.position, "incomplete")
 
 func _turnover_after_interception(intercept_spot: Vector3) -> void:
 	print("INTERCEPTION BY %s DEFENSE" % [possession.to_upper()])
+	var old_offense := offense_team
+	offense_team = defense_team
+	defense_team = old_offense
 	possession = "red" if possession == "blue" else "blue"
+	offense_direction = offense_sign()
 	line_of_scrimmage_z = clamp(intercept_spot.z, -FIELD_HALF_LENGTH + ENDZONE_DEPTH + 1.0, FIELD_HALF_LENGTH - ENDZONE_DEPTH - 1.0)
 	first_down_target_z = line_of_scrimmage_z + offense_sign() * FIRST_DOWN_YARDS
 	down = 1
-	_prepare_new_play()
+	turnover_return_active = true
+	play_type = "run"
 
 func _check_play_end() -> void:
 	if play_phase != "live":
@@ -545,7 +615,7 @@ func _check_play_end() -> void:
 	if _carrier_scored(carrier.position):
 		return
 
-	if ball_in_air:
+	if ball_in_air or play_phase == "pat_setup" or play_phase == "pat_live":
 		return
 
 	for defender in defense_team:
@@ -567,6 +637,15 @@ func _end_play_at(spot: Vector3, reason: String) -> void:
 		line_of_scrimmage_z = old_los
 		gained = 0.0
 
+	if turnover_return_active:
+		down = 1
+		turnover_return_active = false
+		first_down_target_z = line_of_scrimmage_z + offense_sign() * FIRST_DOWN_YARDS
+		_update_line_markers()
+		print("RETURN END: %s | NEW LOS %.1f" % [reason, line_of_scrimmage_z])
+		_prepare_new_play()
+		return
+
 	if _is_safety(spot):
 		_award_safety_to_defense()
 		return
@@ -587,6 +666,7 @@ func _end_play_at(spot: Vector3, reason: String) -> void:
 		down = 1
 		line_of_scrimmage_z = clamp(line_of_scrimmage_z, -FIELD_HALF_LENGTH + ENDZONE_DEPTH + 1.0, FIELD_HALF_LENGTH - ENDZONE_DEPTH - 1.0)
 		first_down_target_z = line_of_scrimmage_z + offense_sign() * FIRST_DOWN_YARDS
+		turnover_return_active = false
 
 	_prepare_new_play()
 
@@ -611,14 +691,187 @@ func _carrier_scored(carrier_pos: Vector3) -> bool:
 	if possession == "blue" and carrier_pos.z >= FIELD_HALF_LENGTH - ENDZONE_DEPTH:
 		blue_score += 6
 		print("BLUE TD | SCORE %d - %d" % [blue_score, red_score])
-		_start_drive("red")
+		_start_pat_attempt("blue")
 		return true
 	if possession == "red" and carrier_pos.z <= -FIELD_HALF_LENGTH + ENDZONE_DEPTH:
 		red_score += 6
 		print("RED TD | SCORE %d - %d" % [blue_score, red_score])
-		_start_drive("blue")
+		_start_pat_attempt("red")
 		return true
 	return false
+
+func _add_goal_posts() -> void:
+	for z_sign in [-1.0, 1.0]:
+		var crossbar := MeshInstance3D.new()
+		var cross_mesh := BoxMesh.new()
+		cross_mesh.size = Vector3(5.8, 0.22, 0.22)
+		crossbar.mesh = cross_mesh
+		crossbar.position = Vector3(0.0, 3.0, z_sign * (FIELD_HALF_LENGTH - ENDZONE_DEPTH + 1.2))
+		crossbar.material_override = _make_material(Color(1.0, 0.88, 0.2, 1.0))
+		add_child(crossbar)
+
+		for x in [-2.9, 2.9]:
+			var upright := MeshInstance3D.new()
+			var up_mesh := BoxMesh.new()
+			up_mesh.size = Vector3(0.2, 5.4, 0.2)
+			upright.mesh = up_mesh
+			upright.position = Vector3(x, 5.7, z_sign * (FIELD_HALF_LENGTH - ENDZONE_DEPTH + 1.2))
+			upright.material_override = _make_material(Color(1.0, 0.88, 0.2, 1.0))
+			add_child(upright)
+
+func _add_ball_landing_marker() -> void:
+	ball_landing_marker = MeshInstance3D.new()
+	var marker_mesh := CylinderMesh.new()
+	marker_mesh.top_radius = BALL_MARKER_SIZE
+	marker_mesh.bottom_radius = BALL_MARKER_SIZE
+	marker_mesh.height = BALL_MARKER_HEIGHT
+	ball_landing_marker.mesh = marker_mesh
+	ball_landing_marker.material_override = _make_material(Color(1.0, 1.0, 1.0, 0.75))
+	ball_landing_marker.visible = false
+	add_child(ball_landing_marker)
+
+func _draw_route_markers() -> void:
+	_clear_route_markers()
+	for receiver_id in RECEIVER_INDICES:
+		var route: Array = route_targets.get(receiver_id, [])
+		if route.is_empty():
+			continue
+		var prev := offense_team[receiver_id].position
+		for point in route:
+			var marker := MeshInstance3D.new()
+			var seg := BoxMesh.new()
+			var target: Vector3 = point
+			var dir := target - prev
+			seg.size = Vector3(ROUTE_MARKER_WIDTH, 0.05, max(0.7, dir.length()))
+			marker.mesh = seg
+			marker.material_override = _make_material(Color(1.0, 1.0, 1.0, 0.55))
+			marker.position = Vector3((prev.x + target.x) * 0.5, 0.05, (prev.z + target.z) * 0.5)
+			marker.look_at(Vector3(target.x, marker.position.y, target.z), Vector3.UP)
+			add_child(marker)
+			route_markers.append(marker)
+
+			var arrow := MeshInstance3D.new()
+			var arr_mesh := CylinderMesh.new()
+			arr_mesh.top_radius = 0.02
+			arr_mesh.bottom_radius = 0.22
+			arr_mesh.height = 0.2
+			arrow.mesh = arr_mesh
+			arrow.material_override = _make_material(Color(1.0, 1.0, 0.9, 0.8))
+			arrow.position = Vector3(target.x, 0.08, target.z)
+			add_child(arrow)
+			route_markers.append(arrow)
+			prev = target
+
+func _clear_route_markers() -> void:
+	for marker in route_markers:
+		if marker != null:
+			marker.queue_free()
+	route_markers.clear()
+
+func _choose_fourth_down_call() -> String:
+	var to_go := abs(first_down_target_z - line_of_scrimmage_z)
+	var dist_to_td := (FIELD_HALF_LENGTH - ENDZONE_DEPTH - line_of_scrimmage_z) if possession == "blue" else (line_of_scrimmage_z + FIELD_HALF_LENGTH - ENDZONE_DEPTH)
+	if to_go <= 2.5 or dist_to_td <= 9.0:
+		return "pass"
+	if dist_to_td > 26.0:
+		return "punt"
+	return "run"
+
+func _receiver_route_direction(receiver_id: int) -> Vector3:
+	var route: Array = route_targets.get(receiver_id, [])
+	var step := int(receiver_progress.get(receiver_id, 0))
+	if not route.is_empty() and step < route.size():
+		var target: Vector3 = route[step]
+		var dir := target - offense_team[receiver_id].position
+		if dir.length() > 0.001:
+			return dir.normalized()
+	return Vector3(0.0, 0.0, offense_direction)
+
+func _closest_offense_receiver_to(target_pos: Vector3) -> int:
+	var best_id := -1
+	var best_dist := 9999.0
+	for receiver_id in RECEIVER_INDICES:
+		if receiver_id == ball_carrier_index:
+			continue
+		var dist := offense_team[receiver_id].position.distance_to(target_pos)
+		if dist < best_dist:
+			best_dist = dist
+			best_id = receiver_id
+	return best_id
+
+func _start_punt() -> void:
+	var qb := offense_team[QB_INDEX]
+	ball_in_air = true
+	ball_mode = "punt"
+	ball.position = qb.position + Vector3(0.0, 1.0, 0.0)
+	ball_target_player = -1
+	ball_target_pos = qb.position + Vector3(0.0, 0.2, offense_direction * PUNT_DISTANCE)
+	ball_target_pos.x = clamp(ball_target_pos.x, -FIELD_HALF_WIDTH + 1.2, FIELD_HALF_WIDTH - 1.2)
+	ball_target_pos.z = clamp(ball_target_pos.z, -FIELD_HALF_LENGTH + ENDZONE_DEPTH + 0.8, FIELD_HALF_LENGTH - ENDZONE_DEPTH - 0.8)
+	ball_velocity = (ball_target_pos - ball.position) / max(PUNT_HANG_TIME, 0.1)
+	print("%s PUNT" % possession.to_upper())
+
+func _resolve_punt_landing() -> void:
+	ball_in_air = false
+	ball_mode = "normal"
+	line_of_scrimmage_z = clamp(ball_target_pos.z, -FIELD_HALF_LENGTH + ENDZONE_DEPTH + 1.0, FIELD_HALF_LENGTH - ENDZONE_DEPTH - 1.0)
+	possession = "red" if possession == "blue" else "blue"
+	down = 1
+	first_down_target_z = line_of_scrimmage_z + offense_sign() * FIRST_DOWN_YARDS
+	_prepare_new_play()
+
+func _run_pat_setup() -> void:
+	if pat_setup_team == "":
+		return
+	var pat_dir := 1.0 if pat_setup_team == "blue" else -1.0
+	var spot := pat_target_z - pat_dir * 7.0
+	for i in TEAM_SIZE:
+		offense_team[i].position = Vector3(-8.0 + i * 2.5, START_Y, spot - pat_dir * 0.8)
+		defense_team[i].position = Vector3(-8.0 + i * 2.5, START_Y, spot + pat_dir * 1.2)
+	offense_team[QB_INDEX].position = Vector3(0.0, START_Y, spot - pat_dir * 2.4)
+	ball.position = offense_team[QB_INDEX].position + Vector3(0.0, 0.9, 0.0)
+
+func _run_pat_live(delta: float) -> void:
+	if play_clock < PAT_KICK_TIME:
+		var target := offense_team[QB_INDEX].position + Vector3(0.0, 0.0, offense_direction * 2.0)
+		offense_team[QB_INDEX].position = offense_team[QB_INDEX].position.move_toward(target, _player_speed(offense_team[QB_INDEX], false) * delta)
+		ball.position = offense_team[QB_INDEX].position + Vector3(0.0, 0.9, 0.0)
+		return
+	_resolve_pat_kick()
+
+func _start_pat_attempt(scoring_team: String) -> void:
+	pat_setup_team = scoring_team
+	possession = scoring_team
+	offense_team = blue_team if possession == "blue" else red_team
+	defense_team = red_team if possession == "blue" else blue_team
+	offense_direction = offense_sign()
+	pat_target_z = FIELD_HALF_LENGTH - ENDZONE_DEPTH + 1.2 if scoring_team == "blue" else -FIELD_HALF_LENGTH + ENDZONE_DEPTH - 1.2
+	play_phase = "pat_setup"
+	play_clock = 0.0
+	ball_in_air = false
+	ball_mode = "normal"
+	_clear_route_markers()
+
+func _resolve_pat_kick() -> void:
+	if play_phase != "pat_live":
+		return
+	var kick_x := offense_team[QB_INDEX].position.x + randf_range(-0.8, 0.8)
+	var blocked := false
+	for defender in defense_team:
+		if defender.position.distance_to(offense_team[QB_INDEX].position) < 1.8 and randf() < 0.15:
+			blocked = true
+			break
+	if not blocked and abs(kick_x) <= PAT_SUCCESS_WIDTH:
+		if pat_setup_team == "blue":
+			blue_score += 1
+		else:
+			red_score += 1
+		print("%s PAT GOOD | SCORE %d - %d" % [pat_setup_team.to_upper(), blue_score, red_score])
+	else:
+		print("%s PAT NO GOOD" % pat_setup_team.to_upper())
+	var next_drive := "red" if pat_setup_team == "blue" else "blue"
+	pat_setup_team = ""
+	_start_drive(next_drive)
 
 func _nearest_defender_to(pos: Vector3) -> int:
 	var best_idx := -1
