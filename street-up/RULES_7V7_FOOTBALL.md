@@ -70,6 +70,15 @@ For v0, role assignment is light and can change during play.
 - Play ends when ball carrier is down/tagged, out of bounds, or pass incomplete.
 - Interceptions are live-ball turnovers.
 
+## AI Football Behavior (Current Target)
+- Offense aligns in formation before the snap.
+- Play call alternates between run concepts and pass concepts.
+- QB drops back, reads receiver separation, and throws when a route opens.
+- Receivers run route trees (vertical, break, slant-like paths).
+- Run plays use a handoff with lane + evade behavior.
+- Defense mixes rushers and coverage defenders that trail assigned routes.
+- Tackles and incompletions end plays; downs and distance update every snap.
+
 ## Clock + Match Rules
 - Keep it simple for now:
 	- 2 halves.
@@ -99,6 +108,7 @@ Later, Street Up will include a long-term team-building mode: **Street Games**.
 - Two AI teams run continuously.
 - Possessions change after stops/scores.
 - Score updates when end zone reached.
+- AI can run real football-like pass and run decisions.
 
 ## What Comes Next After v0
 - Better route logic and pursuit angles.
