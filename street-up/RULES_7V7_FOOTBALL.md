@@ -79,6 +79,12 @@ For v0, role assignment is light and can change during play.
 - Defense mixes rushers and coverage defenders that trail assigned routes.
 - Tackles and incompletions end plays; downs and distance update every snap.
 
+
+## Contact + Camera Prototype Rules
+- Players have body collision/push behavior so teams must fight through traffic.
+- Ball carriers lose speed when defenders make close contact.
+- Camera follows the ball during live plays so action stays centered.
+
 ## Clock + Match Rules
 - Keep it simple for now:
 	- 2 halves.

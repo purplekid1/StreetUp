@@ -9,12 +9,17 @@ const SPRINT_SPEED := 8.2
 const BALL_SPEED := 23.0
 const CATCH_RADIUS := 1.4
 const TACKLE_DISTANCE := 1.4
+const PLAYER_RADIUS := 0.58
+const COLLISION_PUSH := 0.9
+const CONTACT_SLOWDOWN := 0.55
 const START_Y := 0.6
 const PRE_SNAP_TIME := 0.8
 const MAX_PLAYS_PER_DRIVE := 4
 const FIRST_DOWN_YARDS := 12.0
 const QB_THROW_TIME_MIN := 1.0
 const QB_THROW_TIME_MAX := 2.6
+const CAMERA_HEIGHT := 35.0
+const CAMERA_BACK_OFFSET := 26.0
 
 const RECEIVER_INDICES := [1, 2, 3, 4]
 const RB_INDEX := 5
@@ -22,7 +27,9 @@ const SLOT_INDEX := 6
 
 var blue_team: Array[Node3D] = []
 var red_team: Array[Node3D] = []
+var all_players: Array[Node3D] = []
 var ball: Node3D
+var follow_camera: Camera3D
 
 var blue_score := 0
 var red_score := 0
@@ -31,7 +38,6 @@ var possession := "blue"
 var down := 1
 var line_of_scrimmage_z := 0.0
 var first_down_target_z := 0.0
-var drive_start_z := 0.0
 
 var offense_team: Array[Node3D] = []
 var defense_team: Array[Node3D] = []
@@ -52,7 +58,6 @@ var ball_in_air := false
 var ball_velocity := Vector3.ZERO
 var ball_target_player := -1
 var ball_target_pos := Vector3.ZERO
-var pass_origin := Vector3.ZERO
 
 func _ready() -> void:
 	randomize()
@@ -64,13 +69,16 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	play_clock += delta
 	if play_phase == "pre_snap":
-		_run_presnap_alignment(delta)
+		_run_presnap_alignment()
 		if play_clock >= PRE_SNAP_TIME:
 			play_phase = "live"
 			play_clock = 0.0
 	elif play_phase == "live":
 		_run_live_play(delta)
+
+	_resolve_player_collisions()
 	_update_ball(delta)
+	_update_camera(delta)
 	_check_play_end()
 
 func _setup_world() -> void:
@@ -78,11 +86,11 @@ func _setup_world() -> void:
 	sun.rotation_degrees = Vector3(-45.0, -40.0, 0.0)
 	add_child(sun)
 
-	var camera := Camera3D.new()
-	camera.position = Vector3(0.0, 52.0, 42.0)
-	camera.rotation_degrees = Vector3(-55.0, 0.0, 0.0)
-	camera.current = true
-	add_child(camera)
+	follow_camera = Camera3D.new()
+	follow_camera.position = Vector3(0.0, 52.0, 42.0)
+	follow_camera.rotation_degrees = Vector3(-55.0, 0.0, 0.0)
+	follow_camera.current = true
+	add_child(follow_camera)
 
 	_add_field()
 
@@ -118,17 +126,21 @@ func _spawn_teams() -> void:
 		var lane := lerp(-FIELD_HALF_WIDTH + 2.5, FIELD_HALF_WIDTH - 2.5, float(i) / float(max(1, TEAM_SIZE - 1)))
 		var blue := _spawn_player(Color(0.2, 0.4, 1.0, 1.0), Vector3(lane, START_Y, -10.0))
 		blue_team.append(blue)
+		all_players.append(blue)
 
 		var red := _spawn_player(Color(1.0, 0.2, 0.2, 1.0), Vector3(lane, START_Y, 10.0))
 		red_team.append(red)
+		all_players.append(red)
 
 func _spawn_player(color: Color, spawn_position: Vector3) -> Node3D:
-	var body := MeshInstance3D.new()
+	var body := Node3D.new()
+	var mesh := MeshInstance3D.new()
 	var capsule := CapsuleMesh.new()
 	capsule.mid_height = 1.2
 	capsule.radius = 0.45
-	body.mesh = capsule
-	body.material_override = _make_material(color)
+	mesh.mesh = capsule
+	mesh.material_override = _make_material(color)
+	body.add_child(mesh)
 	body.position = spawn_position
 	add_child(body)
 	return body
@@ -145,7 +157,6 @@ func _start_drive(team: String) -> void:
 	possession = team
 	down = 1
 	line_of_scrimmage_z = -18.0 if possession == "blue" else 18.0
-	drive_start_z = line_of_scrimmage_z
 	first_down_target_z = line_of_scrimmage_z + offense_sign() * FIRST_DOWN_YARDS
 	_prepare_new_play()
 
@@ -163,7 +174,7 @@ func _prepare_new_play() -> void:
 	receiver_assignments.clear()
 	defender_assignments.clear()
 
-	play_type = "run" if randf() < 0.35 else "pass"
+	play_type = "run" if randf() < 0.4 else "pass"
 	qb_index = 0
 	ball_carrier_index = qb_index
 	_assign_formations()
@@ -177,15 +188,15 @@ func _assign_formations() -> void:
 		var offense_z := line_of_scrimmage_z - offense_direction * 1.2
 		offense_team[i].position = Vector3(x, START_Y, offense_z)
 		if i == qb_index:
-			offense_team[i].position.z = line_of_scrimmage_z - offense_direction * 3.4
+			offense_team[i].position.z = line_of_scrimmage_z - offense_direction * 3.5
 		if i == RB_INDEX:
-			offense_team[i].position = Vector3(-2.2, START_Y, line_of_scrimmage_z - offense_direction * 5.2)
+			offense_team[i].position = Vector3(-2.2, START_Y, line_of_scrimmage_z - offense_direction * 5.3)
 		if i == SLOT_INDEX:
 			offense_team[i].position = Vector3(2.6, START_Y, line_of_scrimmage_z - offense_direction * 2.2)
 
 	for i in TEAM_SIZE:
 		var x := base_x[i]
-		var defense_z := line_of_scrimmage_z + offense_direction * 2.2
+		var defense_z := line_of_scrimmage_z + offense_direction * 2.1
 		defense_team[i].position = Vector3(x, START_Y, defense_z)
 
 	for i in RECEIVER_INDICES:
@@ -220,7 +231,7 @@ func _build_route_for(receiver_index: int) -> Array:
 		Vector3(clamp(start.x + inside_break * 1.2, -FIELD_HALF_WIDTH + 2.0, FIELD_HALF_WIDTH - 2.0), START_Y, line_of_scrimmage_z + offense_direction * route_depth)
 	]
 
-func _run_presnap_alignment(delta: float) -> void:
+func _run_presnap_alignment() -> void:
 	for i in TEAM_SIZE:
 		offense_team[i].position.y = START_Y
 		defense_team[i].position.y = START_Y
@@ -255,7 +266,7 @@ func _run_offense_ai(delta: float) -> void:
 		_move_support_blockers(delta)
 
 func _move_qb_for_pass(qb: Node3D, delta: float) -> void:
-	var target := Vector3(qb.position.x, START_Y, line_of_scrimmage_z - offense_direction * 6.4)
+	var target := Vector3(qb.position.x, START_Y, line_of_scrimmage_z - offense_direction * 6.5)
 	qb.position = qb.position.move_toward(target, PLAYER_SPEED * delta)
 	if ball_carrier_index == qb_index and not ball_in_air:
 		ball.position = qb.position + Vector3(0.0, 0.85, 0.0)
@@ -293,10 +304,14 @@ func _move_runner(runner_index: int, delta: float, scramble_mode: bool) -> void:
 	var runner := offense_team[runner_index]
 	var nearest := _nearest_defender_to(runner.position)
 	var evade_x := 0.0
+	var contact_penalty := 1.0
 	if nearest != -1:
-		evade_x = clamp(runner.position.x - defense_team[nearest].position.x, -1.0, 1.0)
-	var forward := offense_direction * 5.0
-	var side := evade_x * (2.0 if scramble_mode else 3.4)
+		var nearest_pos := defense_team[nearest].position
+		evade_x = clamp(runner.position.x - nearest_pos.x, -1.0, 1.0)
+		if runner.position.distance_to(nearest_pos) < PLAYER_RADIUS * 2.1:
+			contact_penalty = CONTACT_SLOWDOWN
+	var forward := offense_direction * 5.0 * contact_penalty
+	var side := evade_x * (2.0 if scramble_mode else 3.5)
 	var target := runner.position + Vector3(side, 0.0, forward)
 	target.x = clamp(target.x, -FIELD_HALF_WIDTH + 1.2, FIELD_HALF_WIDTH - 1.2)
 	runner.position = runner.position.move_toward(target, SPRINT_SPEED * delta)
@@ -345,13 +360,38 @@ func _try_qb_throw() -> void:
 
 	var qb := offense_team[qb_index]
 	ball_in_air = true
-	pass_origin = qb.position + Vector3(0.0, 0.9, 0.0)
-	ball.position = pass_origin
+	ball.position = qb.position + Vector3(0.0, 0.9, 0.0)
 	ball_target_player = best_receiver
 	var lead := Vector3(0.0, 0.0, offense_direction * 2.8)
 	ball_target_pos = offense_team[best_receiver].position + lead
 	ball_velocity = (ball_target_pos - ball.position).normalized() * BALL_SPEED
 	print("%s QB THROW -> WR%d" % [possession.to_upper(), best_receiver])
+
+func _resolve_player_collisions() -> void:
+	for i in all_players.size():
+		for j in range(i + 1, all_players.size()):
+			var a := all_players[i]
+			var b := all_players[j]
+			var diff := a.position - b.position
+			diff.y = 0.0
+			var dist := diff.length()
+			var min_dist := PLAYER_RADIUS * 2.0
+			if dist <= 0.001:
+				diff = Vector3(0.05, 0.0, 0.0)
+				dist = 0.05
+			if dist < min_dist:
+				var overlap := min_dist - dist
+				var push_dir := diff / dist
+				var push := push_dir * overlap * 0.5 * COLLISION_PUSH
+				a.position += Vector3(push.x, 0.0, push.z)
+				b.position -= Vector3(push.x, 0.0, push.z)
+	_clamp_players_to_field()
+
+func _clamp_players_to_field() -> void:
+	for player in all_players:
+		player.position.x = clamp(player.position.x, -FIELD_HALF_WIDTH + 0.6, FIELD_HALF_WIDTH - 0.6)
+		player.position.z = clamp(player.position.z, -FIELD_HALF_LENGTH + 0.5, FIELD_HALF_LENGTH - 0.5)
+		player.position.y = START_Y
 
 func _update_ball(delta: float) -> void:
 	if ball_in_air:
@@ -361,6 +401,14 @@ func _update_ball(delta: float) -> void:
 	else:
 		var carrier := offense_team[ball_carrier_index]
 		ball.position = carrier.position + Vector3(0.0, 0.85, 0.0)
+
+func _update_camera(delta: float) -> void:
+	if follow_camera == null or ball == null:
+		return
+	var forward_hint := -offense_direction if possession == "blue" else offense_direction
+	var desired := ball.position + Vector3(0.0, CAMERA_HEIGHT, CAMERA_BACK_OFFSET * forward_hint)
+	follow_camera.position = follow_camera.position.lerp(desired, clamp(delta * 3.2, 0.0, 1.0))
+	follow_camera.look_at(ball.position, Vector3.UP)
 
 func _resolve_pass_target() -> void:
 	var receiver := offense_team[ball_target_player]
@@ -383,7 +431,6 @@ func _turnover_after_interception(intercept_spot: Vector3) -> void:
 	print("INTERCEPTION BY %s DEFENSE" % [possession.to_upper()])
 	possession = "red" if possession == "blue" else "blue"
 	line_of_scrimmage_z = clamp(intercept_spot.z, -FIELD_HALF_LENGTH + ENDZONE_DEPTH + 1.0, FIELD_HALF_LENGTH - ENDZONE_DEPTH - 1.0)
-	drive_start_z = line_of_scrimmage_z
 	first_down_target_z = line_of_scrimmage_z + offense_sign() * FIRST_DOWN_YARDS
 	down = 1
 	_prepare_new_play()
@@ -432,6 +479,7 @@ func _end_play_at(spot: Vector3, reason: String) -> void:
 		down = 1
 		line_of_scrimmage_z = clamp(line_of_scrimmage_z, -FIELD_HALF_LENGTH + ENDZONE_DEPTH + 1.0, FIELD_HALF_LENGTH - ENDZONE_DEPTH - 1.0)
 		first_down_target_z = line_of_scrimmage_z + offense_sign() * FIRST_DOWN_YARDS
+
 	_prepare_new_play()
 
 func _carrier_scored(carrier_pos: Vector3) -> bool:
