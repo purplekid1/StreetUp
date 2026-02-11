@@ -746,8 +746,8 @@ func _draw_route_markers() -> void:
 			marker.mesh = seg
 			marker.material_override = _make_material(Color(1.0, 1.0, 1.0, 0.55))
 			marker.position = Vector3((prev.x + target.x) * 0.5, 0.05, (prev.z + target.z) * 0.5)
-			marker.look_at(Vector3(target.x, marker.position.y, target.z), Vector3.UP)
 			add_child(marker)
+			marker.look_at(Vector3(target.x, marker.position.y, target.z), Vector3.UP)
 			route_markers.append(marker)
 
 			var arrow := MeshInstance3D.new()
