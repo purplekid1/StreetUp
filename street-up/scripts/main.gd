@@ -21,15 +21,19 @@ const QB_THROW_TIME_MAX := 2.6
 const CAMERA_HEIGHT := 35.0
 const CAMERA_BACK_OFFSET := 26.0
 
-const RECEIVER_INDICES := [1, 2, 3, 4]
-const RB_INDEX := 5
-const SLOT_INDEX := 6
+const RECEIVER_INDICES := [0, 1, 5, 6]
+const CENTER_INDEX := 2
+const QB_INDEX := 3
+const RB_INDEX := 4
 
 var blue_team: Array[Node3D] = []
 var red_team: Array[Node3D] = []
 var all_players: Array[Node3D] = []
 var ball: Node3D
 var follow_camera: Camera3D
+
+var los_marker: MeshInstance3D
+var first_down_marker: MeshInstance3D
 
 var player_stats: Dictionary = {}
 
@@ -46,7 +50,6 @@ var defense_team: Array[Node3D] = []
 var offense_direction := 1.0
 
 var ball_carrier_index := 0
-var qb_index := 0
 var play_type := "pass"
 var play_phase := "pre_snap"
 var play_clock := 0.0
@@ -95,6 +98,7 @@ func _setup_world() -> void:
 	add_child(follow_camera)
 
 	_add_field()
+	_add_line_markers()
 
 func _add_field() -> void:
 	var ground := MeshInstance3D.new()
@@ -120,9 +124,32 @@ func _add_field() -> void:
 	red_endzone.material_override = _make_material(Color(0.85, 0.12, 0.14, 1.0))
 	add_child(red_endzone)
 
+func _add_line_markers() -> void:
+	los_marker = MeshInstance3D.new()
+	var los_mesh := PlaneMesh.new()
+	los_mesh.size = Vector2(FIELD_HALF_WIDTH * 2.0, 0.6)
+	los_marker.mesh = los_mesh
+	los_marker.position = Vector3(0.0, 0.03, 0.0)
+	los_marker.material_override = _make_material(Color(1.0, 0.92, 0.2, 1.0))
+	add_child(los_marker)
+
+	first_down_marker = MeshInstance3D.new()
+	var first_mesh := PlaneMesh.new()
+	first_mesh.size = Vector2(FIELD_HALF_WIDTH * 2.0, 0.6)
+	first_down_marker.mesh = first_mesh
+	first_down_marker.position = Vector3(0.0, 0.035, 0.0)
+	first_down_marker.material_override = _make_material(Color(1.0, 0.8, 0.1, 1.0))
+	add_child(first_down_marker)
+
+func _update_line_markers() -> void:
+	if los_marker == null or first_down_marker == null:
+		return
+	los_marker.position.z = line_of_scrimmage_z
+	first_down_marker.position.z = first_down_target_z
+
 func _spawn_teams() -> void:
 	for i in TEAM_SIZE:
-		var lane = lerp(-FIELD_HALF_WIDTH + 2.5, FIELD_HALF_WIDTH - 2.5, float(i) / float(max(1, TEAM_SIZE - 1)))
+		var lane := lerp(-FIELD_HALF_WIDTH + 2.5, FIELD_HALF_WIDTH - 2.5, float(i) / float(max(1, TEAM_SIZE - 1)))
 		var blue := _spawn_player(Color(0.2, 0.4, 1.0, 1.0), Vector3(lane, START_Y, -10.0), "blue", i)
 		blue_team.append(blue)
 		all_players.append(blue)
@@ -135,6 +162,7 @@ func _spawn_player(color: Color, spawn_position: Vector3, team_name: String, rol
 	var body := Node3D.new()
 	var mesh := MeshInstance3D.new()
 	var capsule := CapsuleMesh.new()
+	capsule.mid_height = 1.2
 	capsule.radius = 0.45
 	mesh.mesh = capsule
 	mesh.material_override = _make_material(color)
@@ -183,29 +211,33 @@ func _prepare_new_play() -> void:
 	defender_assignments.clear()
 
 	play_type = "run" if randf() < 0.4 else "pass"
-	qb_index = 0
-	ball_carrier_index = qb_index
+	ball_carrier_index = QB_INDEX
 	_assign_formations()
+	_update_line_markers()
 
 	print("%s | DOWN %d | LOS %.1f | TO GO %.1f | PLAY %s" % [possession.to_upper(), down, line_of_scrimmage_z, abs(first_down_target_z - line_of_scrimmage_z), play_type.to_upper()])
 
 func _assign_formations() -> void:
-	var base_x: Array[float] = [-8.0, -4.0, -1.5, 1.5, 4.0, 7.0, 10.0]
+	var base_x: Array[float] = [-10.0, -5.0, 0.0, 0.0, -2.2, 5.0, 10.0]
 	for i in TEAM_SIZE:
 		var x := base_x[i]
-		var offense_z := line_of_scrimmage_z - offense_direction * 1.2
+		var offense_z := line_of_scrimmage_z - offense_direction * 1.0
 		offense_team[i].position = Vector3(x, START_Y, offense_z)
-		if i == qb_index:
-			offense_team[i].position.z = line_of_scrimmage_z - offense_direction * 3.5
-		if i == RB_INDEX:
-			offense_team[i].position = Vector3(-2.2, START_Y, line_of_scrimmage_z - offense_direction * 5.3)
-		if i == SLOT_INDEX:
-			offense_team[i].position = Vector3(2.6, START_Y, line_of_scrimmage_z - offense_direction * 2.2)
 
+	offense_team[CENTER_INDEX].position = Vector3(0.0, START_Y, line_of_scrimmage_z - offense_direction * 0.3)
+	offense_team[QB_INDEX].position = Vector3(0.0, START_Y, line_of_scrimmage_z - offense_direction * 3.8)
+	offense_team[RB_INDEX].position = Vector3(-2.2, START_Y, line_of_scrimmage_z - offense_direction * 6.0)
+	offense_team[0].position = Vector3(-10.0, START_Y, line_of_scrimmage_z - offense_direction * 1.0)
+	offense_team[1].position = Vector3(-5.0, START_Y, line_of_scrimmage_z - offense_direction * 1.4)
+	offense_team[5].position = Vector3(5.0, START_Y, line_of_scrimmage_z - offense_direction * 1.4)
+	offense_team[6].position = Vector3(10.0, START_Y, line_of_scrimmage_z - offense_direction * 1.0)
+
+	var defense_x: Array[float] = [-8.5, -4.0, -1.5, 1.5, 4.0, 7.0, 0.0]
 	for i in TEAM_SIZE:
-		var x := base_x[i]
 		var defense_z := line_of_scrimmage_z + offense_direction * 2.0
-		defense_team[i].position = Vector3(x, START_Y, defense_z)
+		defense_team[i].position = Vector3(defense_x[i], START_Y, defense_z)
+
+	defense_team[6].position = Vector3(0.0, START_Y, line_of_scrimmage_z + offense_direction * 8.0)
 
 	for i in RECEIVER_INDICES:
 		var route := _build_route_for(i)
@@ -217,8 +249,8 @@ func _assign_formations() -> void:
 func _assign_coverage() -> void:
 	var defenders := [1, 2, 3, 4]
 	for idx in RECEIVER_INDICES.size():
-		var receiver_id = RECEIVER_INDICES[idx]
-		var defender_id = defenders[idx % defenders.size()]
+		var receiver_id := RECEIVER_INDICES[idx]
+		var defender_id := defenders[idx % defenders.size()]
 		receiver_assignments[receiver_id] = defender_id
 		defender_assignments[defender_id] = receiver_id
 
@@ -244,15 +276,15 @@ func _run_presnap_alignment() -> void:
 		offense_team[i].position.y = START_Y
 		defense_team[i].position.y = START_Y
 
-	if ball_carrier_index == qb_index:
-		ball.position = offense_team[qb_index].position + Vector3(0.0, 0.85, 0.0)
+	if ball_carrier_index == QB_INDEX:
+		ball.position = offense_team[QB_INDEX].position + Vector3(0.0, 0.85, 0.0)
 
 func _run_live_play(delta: float) -> void:
 	_run_offense_ai(delta)
 	_run_defense_ai(delta)
 
 func _run_offense_ai(delta: float) -> void:
-	var qb := offense_team[qb_index]
+	var qb := offense_team[QB_INDEX]
 	if play_type == "pass":
 		_move_qb_for_pass(qb, delta)
 		_move_receivers(delta)
@@ -260,23 +292,23 @@ func _run_offense_ai(delta: float) -> void:
 		if play_clock >= QB_THROW_TIME_MIN and not ball_in_air:
 			_try_qb_throw()
 		if play_clock >= QB_THROW_TIME_MAX and not ball_in_air:
-			ball_carrier_index = qb_index
-			_move_runner(qb_index, delta, true)
+			ball_carrier_index = QB_INDEX
+			_move_runner(QB_INDEX, delta, true)
 	else:
 		if play_clock < 0.6:
 			_move_qb_for_handoff(qb, delta)
 			_move_receivers(delta)
 		else:
-			if ball_carrier_index == qb_index:
+			if ball_carrier_index == QB_INDEX:
 				ball_carrier_index = RB_INDEX
 			_move_runner(ball_carrier_index, delta, false)
 			_move_receivers(delta)
 		_move_off_ball_support(delta)
 
 func _move_qb_for_pass(qb: Node3D, delta: float) -> void:
-	var target := Vector3(qb.position.x, START_Y, line_of_scrimmage_z - offense_direction * 6.3)
+	var target := Vector3(0.0, START_Y, line_of_scrimmage_z - offense_direction * 6.3)
 	qb.position = qb.position.move_toward(target, _player_speed(qb, false) * delta)
-	if ball_carrier_index == qb_index and not ball_in_air:
+	if ball_carrier_index == QB_INDEX and not ball_in_air:
 		ball.position = qb.position + Vector3(0.0, 0.85, 0.0)
 
 func _move_qb_for_handoff(qb: Node3D, delta: float) -> void:
@@ -343,10 +375,10 @@ func _run_defense_ai(delta: float) -> void:
 	for defender_id in TEAM_SIZE:
 		var defender := defense_team[defender_id]
 		var target := defender.position
-		if ball_past_los or ball_carrier_index != qb_index:
+		if ball_past_los or ball_carrier_index != QB_INDEX:
 			target = carrier_pos
 		elif defender_id in rushers:
-			target = offense_team[qb_index].position
+			target = offense_team[QB_INDEX].position
 		else:
 			var receiver_id := int(defender_assignments.get(defender_id, -1))
 			if receiver_id != -1:
@@ -366,7 +398,7 @@ func _try_qb_throw() -> void:
 		var defender_id := int(receiver_assignments.get(receiver_id, -1))
 		if defender_id != -1:
 			var separation := receiver.position.distance_to(defense_team[defender_id].position)
-			score += separation * 3.0 * _player_awareness(offense_team[qb_index])
+			score += separation * 3.0 * _player_awareness(offense_team[QB_INDEX])
 		if abs(receiver.position.x) > FIELD_HALF_WIDTH - 2.0:
 			score -= 2.5
 		if score > best_score:
@@ -376,7 +408,7 @@ func _try_qb_throw() -> void:
 	if best_receiver == -1:
 		return
 
-	var qb := offense_team[qb_index]
+	var qb := offense_team[QB_INDEX]
 	ball_in_air = true
 	ball.position = qb.position + Vector3(0.0, 0.9, 0.0)
 	ball_target_player = best_receiver
@@ -483,6 +515,10 @@ func _end_play_at(spot: Vector3, reason: String) -> void:
 		line_of_scrimmage_z = old_los
 		gained = 0.0
 
+	if _is_safety(spot):
+		_award_safety_to_defense()
+		return
+
 	if line_of_scrimmage_z * offense_direction >= first_down_target_z * offense_direction:
 		down = 1
 		first_down_target_z = line_of_scrimmage_z + offense_direction * FIRST_DOWN_YARDS
@@ -490,6 +526,7 @@ func _end_play_at(spot: Vector3, reason: String) -> void:
 	else:
 		down += 1
 
+	_update_line_markers()
 	print("PLAY END: %s | GAIN %.1f | DOWN %d" % [reason, gained, down])
 
 	if down > MAX_PLAYS_PER_DRIVE:
@@ -500,6 +537,23 @@ func _end_play_at(spot: Vector3, reason: String) -> void:
 		first_down_target_z = line_of_scrimmage_z + offense_sign() * FIRST_DOWN_YARDS
 
 	_prepare_new_play()
+
+func _is_safety(spot: Vector3) -> bool:
+	if possession == "blue" and spot.z <= -FIELD_HALF_LENGTH + ENDZONE_DEPTH:
+		return true
+	if possession == "red" and spot.z >= FIELD_HALF_LENGTH - ENDZONE_DEPTH:
+		return true
+	return false
+
+func _award_safety_to_defense() -> void:
+	if possession == "blue":
+		red_score += 2
+		print("SAFETY RED | SCORE %d - %d" % [blue_score, red_score])
+		_start_drive("red")
+	else:
+		blue_score += 2
+		print("SAFETY BLUE | SCORE %d - %d" % [blue_score, red_score])
+		_start_drive("blue")
 
 func _carrier_scored(carrier_pos: Vector3) -> bool:
 	if possession == "blue" and carrier_pos.z >= FIELD_HALF_LENGTH - ENDZONE_DEPTH:
@@ -538,7 +592,7 @@ func offense_sign() -> float:
 	return 1.0 if possession == "blue" else -1.0
 
 func _player_stat(player: Node3D, key: String, fallback: float) -> float:
-	var stat = player_stats.get(player.get_instance_id(), {})
+	var stat := player_stats.get(player.get_instance_id(), {})
 	return float(stat.get(key, fallback))
 
 func _player_speed(player: Node3D, sprint: bool) -> float:

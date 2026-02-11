@@ -90,6 +90,19 @@ For v0, role assignment is light and can change during play.
 - Defenders do not stop at old assignments once the carrier breaks contain.
 - Offense tries to protect the carrier with non-carrier teammates while receivers run routes until the catch event.
 
+## QB Alignment Rule (Current Prototype)
+- QB lines up directly behind the center at pre-snap.
+- QB starts every play with the ball for pass or handoff decisions.
+
+## Field Guide Lines (Current Prototype)
+- Yellow line marks the current line of scrimmage.
+- Yellow line marks the first-down target.
+- Lines update every play so progression is always visible.
+
+## Safety Rule (Enabled)
+- If the offense is stopped in its own end zone, the defense gets 2 points.
+- After a safety, possession flips to the scoring defense for the next drive.
+
 ## Contact + Camera Prototype Rules
 - Players have body collision/push behavior so teams must fight through traffic.
 - Ball carriers lose speed when defenders make close contact.
